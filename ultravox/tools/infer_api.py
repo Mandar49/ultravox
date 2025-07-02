@@ -13,20 +13,23 @@ from ultravox.inference import base
 
 
 class OpenAIInference(base.VoiceInference):
-    def __init__(self, url: str, model: str, api_key: Optional[str] = None):
+    def __init__(
+        self, url: str, model: str = "gpt-4o-mini", api_key: Optional[str] = None
+    ):
         self._base_url = url
         self._model = model
-        self._api_key = api_key
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
 
     def infer(
         self,
         sample: datasets.VoiceSample,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        lang: Optional[str] = None,
     ) -> base.VoiceOutput:
         text = ""
         stats = None
-        gen = self.infer_stream(sample, max_tokens, temperature)
+        gen = self.infer_stream(sample, max_tokens, temperature, lang)
         for msg in gen:
             if isinstance(msg, base.InferenceChunk):
                 text += msg.text
@@ -41,6 +44,7 @@ class OpenAIInference(base.VoiceInference):
         sample: datasets.VoiceSample,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        lang: Optional[str] = None,
     ) -> base.InferenceGenerator:
         url = f"{self._base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
@@ -48,7 +52,7 @@ class OpenAIInference(base.VoiceInference):
             headers["Authorization"] = f"Bearer {self._api_key}"
         data = {
             "model": self._model,
-            "messages": self._build_messages(sample),
+            "messages": self._build_messages(sample, lang),
             "stream": True,
         }
         if max_tokens is not None:
@@ -74,7 +78,7 @@ class OpenAIInference(base.VoiceInference):
         if not got_stats:
             yield base.InferenceStats(-1, num_tokens)
 
-    def _build_messages(self, sample: datasets.VoiceSample):
+    def _build_messages(self, sample: datasets.VoiceSample, lang: Optional[str] = None):
         """
         Convert a VoiceSample into a list of messages for the OpenAI API.
         This function assumes that if the sample has an audio field, it is in
@@ -82,8 +86,17 @@ class OpenAIInference(base.VoiceInference):
 
         Audio is converted to a data URI and inserted into the message under an image_url type.
         """
+        messages = sample.messages
+        if lang in {"hinglish", "en-IN"}:
+            style = (
+                "Please respond in Hinglish mixing Hindi and English."
+                if lang == "hinglish"
+                else "Please respond in Indian English style."
+            )
+            messages = [{"role": "system", "content": style}] + messages
+
         if sample.audio is None:
-            return sample.messages
+            return messages
 
         fragments = sample.messages[-1]["content"].split("<|audio|>")
         assert len(fragments) == 2, "Expected one <|audio|> placeholder"
@@ -94,7 +107,7 @@ class OpenAIInference(base.VoiceInference):
             {"type": "text", "text": fragments[1]},
         ]
         last_turn = {"role": "user", "content": parts}
-        return sample.messages[:-1] + [last_turn]
+        return messages[:-1] + [last_turn]
 
 
 class DatabricksInference(base.VoiceInference):
@@ -172,7 +185,7 @@ class GradioInference(base.VoiceInference):
 
 
 def create_inference(
-    url: str, model: Optional[str], api_key: Optional[str]
+    url: str, model: Optional[str] = None, api_key: Optional[str] = None
 ) -> base.VoiceInference:
     if (
         url.startswith("https://demo.tincans.ai")
@@ -183,7 +196,8 @@ def create_inference(
     elif url.endswith("databricks.net"):
         return DatabricksInference(url)
     elif url.endswith("/v1"):
-        assert model, "Model must be specified for OpenAI inference"
+        api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        model = model or "gpt-4o-mini"
         return OpenAIInference(url, model, api_key)
     else:
         raise ValueError(f"Unknown inference URL: {url}")
