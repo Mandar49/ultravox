@@ -8,6 +8,8 @@ import numpy as np
 import requests
 import soundfile as sf
 
+from . import coqui_tts
+
 RANDOM_VOICE_KEY = "random"
 REQUEST_TIMEOUT = 30
 NUM_RETRIES = 3
@@ -159,6 +161,33 @@ class ElevenTts(Client):
             },
         }
         return self._handle_pcm_response(self._post(url, headers, body))
+
+
+def speak(text: str, lang: str, sample_rate: int = 16000) -> bytes:
+    """Synthesize speech using ElevenLabs if available, otherwise Coqui."""
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    if api_key:
+        voice = "21m00Tcm4TlvDq8ikWAM"
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream?output_format=pcm_16000"
+        text_ssml = text.replace(",", ',<break time="400ms"/>').replace(
+            "…", '…<break time="400ms"/>'
+        )
+        body = {
+            "text": f"<speak>{text_ssml}</speak>",
+            "text_type": "ssml",
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {"stability": 0.5, "similarity_boost": False},
+        }
+        headers = {"xi-api-key": api_key}
+        response = requests.post(
+            url, headers=headers, json=body, timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        pcm = np.frombuffer(response.content, dtype=np.int16)
+        wav_bytes = io.BytesIO()
+        sf.write(wav_bytes, pcm, sample_rate, format="wav")
+        return wav_bytes.getvalue()
+    return coqui_tts.speak(text, lang, sample_rate)
 
 
 def create_client(implementation: str, sample_rate: int):

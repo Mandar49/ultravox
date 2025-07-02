@@ -192,3 +192,7 @@ output/
 
 saved_tokenizer/
 .run_configs/
+# Node
+node_modules/
+dashboard/node_modules/
+
